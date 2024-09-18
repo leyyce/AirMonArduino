@@ -24,7 +24,7 @@ Bsec bme680;
 uint8_t bsecState[BSEC_MAX_STATE_BLOB_SIZE] = {0};
 uint16_t stateUpdateCounter = 0;
 
-Adafruit_CCS811 ccs881;
+Adafruit_CCS811 ccs811;
 
 Adafruit_SGP30 sgp30;
 
@@ -90,7 +90,7 @@ void setup()
   }
 
   Serial.println("[#] Initializing CCS811...");
-  if(!ccs881.begin()){
+  if(!ccs811.begin()){
     Serial.println("[!] Failed to start CCS811 sensor! Please check your wiring.");
   } else {
     Serial.println("[!] CCS811 initialized succesfully");
@@ -182,29 +182,40 @@ void loop()
   }
 
   if (bme680Updated) {
-    ccs881.setEnvironmentalData(bme680hum, bme680temp);
+    ccs811.setEnvironmentalData(bme680hum, bme680temp);
     sgp30.setHumidity(getAbsoluteHumidity(bme680temp, bme680hum));
   }
 
   char ccs811Value[256];
   bool ccs811Updated = false;
-  if(ccs881.available()){
-    if(!ccs881.readData()){
-      uint16_t eCO2 = ccs881.geteCO2();
-      uint16_t tvoc = ccs881.getTVOC();
+  if(ccs811.available()) {
+    if(!ccs811.readData()) {
+      uint16_t eCO2 = ccs811.geteCO2();
+      uint16_t tvoc = ccs811.getTVOC();
       Serial.print("[#] CCS811: eCO2: " + String(eCO2) + "ppm; ");
-      Serial.println("TVOC: " + String(tvoc));
+      Serial.print("TVOC: " + String(tvoc));
       output = eCO2;
       output += ";" + String(tvoc);
+      if (bme680Updated) {
+        float iaq = calculateIAQ(eCO2, tvoc, bme680temp, bme680hum);
+        output += ";" + String(iaq);
+        Serial.println("; IAQ: " + String(iaq));
+      } else {
+        Serial.println("");
+      }
       output.toCharArray(ccs811Value, 256);
       ccs811Updated = true;
-    }
-    else{
+    } else {
       output = "Error reading from CCS811 sensor";
       Serial.println("[!] " + output);
       output.toCharArray(ccs811Value, 256);
       ccs811Updated = true;
     }
+  } else {
+    output = "CCS811 sensor data not available";
+    Serial.println("[!] " + output);
+    output.toCharArray(ccs811Value, 256);
+    ccs811Updated = true;
   }
 
   char sgp30Value[256];
@@ -213,9 +224,16 @@ void loop()
     uint16_t eCO2 = sgp30.eCO2;
     uint16_t tvoc = sgp30.TVOC;
     Serial.print("[#] SGP30: eCO2: " + String(eCO2) + "ppm; ");
-    Serial.println("TVOC: " + String(tvoc));
+    Serial.print("TVOC: " + String(tvoc));
     output = eCO2;
     output += ";" + String(tvoc);
+    if (bme680Updated) {
+      float iaq = calculateIAQ(eCO2, tvoc, bme680temp, bme680hum);
+      output += ";" + String(iaq);
+      Serial.println("; IAQ: " + String(iaq));
+    } else {
+      Serial.println("");
+    }
     output.toCharArray(sgp30Value, 256);
     sgp30Updated = true;
   } else {
@@ -232,16 +250,15 @@ void loop()
     if (bme680Updated) {
       bme680Characteristic->setValue(bme680Value);
       bme680Characteristic->notify();
-    }
 
-    if (ccs811Updated) {
-      ccs811Characteristic->setValue(ccs811Value);
-      ccs811Characteristic->notify();
-    }
-
-    if (sgp30Updated) {
-      sgp30Characteristic->setValue(sgp30Value);
-      sgp30Characteristic->notify();
+      if (ccs811Updated) {
+        ccs811Characteristic->setValue(ccs811Value);
+        ccs811Characteristic->notify();
+      }
+      if (sgp30Updated) {
+        sgp30Characteristic->setValue(sgp30Value);
+        sgp30Characteristic->notify();
+      }
     }
 
     oldConn = true;
@@ -319,7 +336,7 @@ void bme680UpdateState()
       }
 
       EEPROM.write(0, BSEC_MAX_STATE_BLOB_SIZE);
-      EEPROM.commit(); 
+      EEPROM.commit();
     }
   }
 }
@@ -329,4 +346,12 @@ uint32_t getAbsoluteHumidity(float temperature, float humidity) {
     const float absoluteHumidity = 216.7f * ((humidity / 100.0f) * 6.112f * exp((17.62f * temperature) / (243.12f + temperature)) / (273.15f + temperature)); // [g/m^3]
     const uint32_t absoluteHumidityScaled = static_cast<uint32_t>(1000.0f * absoluteHumidity); // [mg/m^3]
     return absoluteHumidityScaled;
+}
+
+float calculateIAQ(uint16_t eCO2, uint16_t tvoc, float temp, float hum) {
+  float eCO2Contrib = ((eCO2 - 400.) / (8000. - 400.)) * 500.;
+  float tvocContrib = (tvoc / 1200.) * 500.;
+  float tempPenalty = 1 + abs((temp - 22.5) / 22.5) * 0.1;
+  float humPenalty = 1 + abs((hum - 45) / 45) * 0.1;
+  return (eCO2Contrib + tvocContrib) * tempPenalty * humPenalty;
 }

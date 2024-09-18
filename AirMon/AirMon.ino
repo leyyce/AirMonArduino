@@ -351,9 +351,9 @@ uint32_t getAbsoluteHumidity(float temperature, float humidity) {
 }
 
 float calculateIAQ(uint16_t eCO2, uint16_t tvoc, float temp, float hum) {
-  float eCO2Contrib = ((eCO2 - 400.) / (8000. - 400.)) * 500.;
+  float eCO2Contrib = ((eCO2) / (8000. - 400.)) * 500.;
   float tvocContrib = (tvoc / 6000.) * 500.;
   float tempPenalty = 1 + abs((temp - 22.5) / 22.5) * 0.1;
   float humPenalty = 1 + abs((hum - 45) / 45) * 0.1;
-  return (eCO2Contrib * 0.35 + tvocContrib * 0.65) * tempPenalty * humPenalty;
+  return (eCO2Contrib * 0.45 + tvocContrib * 0.55) * tempPenalty * humPenalty;
 }

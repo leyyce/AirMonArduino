@@ -156,6 +156,7 @@ void loop()
 
   char bme680Value[256];
   bool bme680Updated = false;
+  bool bme680HasTempAndHum = false;
   float bme680temp;
   float bme680hum;
   if (bme680.run()) { // If new data is available
@@ -171,6 +172,7 @@ void loop()
     Serial.println("[#] BME680: " + output);
     output.toCharArray(bme680Value, 256);
     bme680Updated = true;
+    bme680HasTempAndHum = true;
     bme680UpdateState();
   } else {
     int code = checkBME680SensorStatus();
@@ -181,7 +183,7 @@ void loop()
     }
   }
 
-  if (bme680Updated) {
+  if (bme680HasTempAndHum) {
     ccs811.setEnvironmentalData(bme680hum, bme680temp);
     sgp30.setHumidity(getAbsoluteHumidity(bme680temp, bme680hum));
   }
@@ -194,9 +196,9 @@ void loop()
       uint16_t tvoc = ccs811.getTVOC();
       Serial.print("[#] CCS811: eCO2: " + String(eCO2) + "ppm; ");
       Serial.print("TVOC: " + String(tvoc));
-      output = eCO2;
+      output = String(eCO2);
       output += ";" + String(tvoc);
-      if (bme680Updated) {
+      if (bme680HasTempAndHum) {
         float iaq = calculateIAQ(eCO2, tvoc, bme680temp, bme680hum);
         output += ";" + String(iaq);
         Serial.println("; IAQ: " + String(iaq));
@@ -225,9 +227,9 @@ void loop()
     uint16_t tvoc = sgp30.TVOC;
     Serial.print("[#] SGP30: eCO2: " + String(eCO2) + "ppm; ");
     Serial.print("TVOC: " + String(tvoc));
-    output = eCO2;
+    output = String(eCO2);
     output += ";" + String(tvoc);
-    if (bme680Updated) {
+    if (bme680HasTempAndHum) {
       float iaq = calculateIAQ(eCO2, tvoc, bme680temp, bme680hum);
       output += ";" + String(iaq);
       Serial.println("; IAQ: " + String(iaq));

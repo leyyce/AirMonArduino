@@ -18,10 +18,10 @@ const uint8_t bsec_config_iaq[] = {
 };
 
 
-#define STATE_SAVE_PERIOD	UINT32_C(360 * 60 * 1000) // 360 minutes - 4 times a day
+#define STATE_SAVE_PERIOD UINT32_C(360 * 60 * 1000)  // 360 minutes - 4 times a day
 
 Bsec bme680;
-uint8_t bsecState[BSEC_MAX_STATE_BLOB_SIZE] = {0};
+uint8_t bsecState[BSEC_MAX_STATE_BLOB_SIZE] = { 0 };
 uint16_t stateUpdateCounter = 0;
 
 Adafruit_CCS811 ccs811;
@@ -35,16 +35,16 @@ BLECharacteristic *sgp30Characteristic;
 bool devConn = false;
 bool oldConn = false;
 
-class AirMonCallbacks: public BLEServerCallbacks {
+class AirMonCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer *pServer) {
     Serial.printf("[!] Client connected to server\n");
     devConn = true;
   };
-  void onDisconnect(BLEServer* pServer) {
+  void onDisconnect(BLEServer *pServer) {
     Serial.printf("[!] Client disconnected from server\n");
     devConn = false;
     // nicht verbunden -> erneut advertising starten
-    if(oldConn) {
+    if (oldConn) {
       oldConn = false;
       Serial.println("[#] Advertising started...");
       BLEDevice::startAdvertising();
@@ -52,8 +52,7 @@ class AirMonCallbacks: public BLEServerCallbacks {
   }
 };
 
-void setup() 
-{
+void setup() {
   // EEPROM.begin(BSEC_MAX_STATE_BLOB_SIZE + 1);
   Serial.begin(115200);
   Serial.println("[#] Initializing sensors...");
@@ -90,13 +89,13 @@ void setup()
   }
 
   Serial.println("[#] Initializing CCS811...");
-  if(!ccs811.begin()){
+  if (!ccs811.begin()) {
     Serial.println("[!] Failed to start CCS811 sensor! Please check your wiring.");
   } else {
     Serial.println("[!] CCS811 initialized succesfully");
   }
   Serial.println("[#] Initializing SGP30...");
-  if (!sgp30.begin()){
+  if (!sgp30.begin()) {
     Serial.println("[!] Failed to start SGP30 sensor! Please check your wiring.");
   } else {
     Serial.println("[!] SGP30 initialized succesfully");
@@ -111,29 +110,20 @@ void setup()
   BLEService *environmentalDataService = airMonServer->createService(SERV_UUID);
 
   bme680Characteristic = environmentalDataService->createCharacteristic(
-		    BME680_CHAR_UUID,
-		    BLECharacteristic::PROPERTY_READ |
-		    BLECharacteristic::PROPERTY_WRITE |
-		    BLECharacteristic::PROPERTY_NOTIFY |
-		    BLECharacteristic::PROPERTY_INDICATE);
+    BME680_CHAR_UUID,
+    BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_NOTIFY | BLECharacteristic::PROPERTY_INDICATE);
   // Needed descriptor for notify/indicate
   bme680Characteristic->addDescriptor(new BLE2902());
 
   ccs811Characteristic = environmentalDataService->createCharacteristic(
-		    CCS811_CHAR_UUID, 
-		    BLECharacteristic::PROPERTY_READ |
-		    BLECharacteristic::PROPERTY_WRITE |
-		    BLECharacteristic::PROPERTY_NOTIFY |
-		    BLECharacteristic::PROPERTY_INDICATE);
+    CCS811_CHAR_UUID,
+    BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_NOTIFY | BLECharacteristic::PROPERTY_INDICATE);
   // Needed descriptor for notify/indicate
   ccs811Characteristic->addDescriptor(new BLE2902());
 
   sgp30Characteristic = environmentalDataService->createCharacteristic(
-		    SGP30_CHAR_UUID, 
-		    BLECharacteristic::PROPERTY_READ |
-		    BLECharacteristic::PROPERTY_WRITE |
-		    BLECharacteristic::PROPERTY_NOTIFY |
-		    BLECharacteristic::PROPERTY_INDICATE);
+    SGP30_CHAR_UUID,
+    BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_NOTIFY | BLECharacteristic::PROPERTY_INDICATE);
   // Needed descriptor for notify/indicate
   sgp30Characteristic->addDescriptor(new BLE2902());
 
@@ -143,15 +133,14 @@ void setup()
   BLEAdvertising *airMonAdvertising = BLEDevice::getAdvertising();
   airMonAdvertising->addServiceUUID(SERV_UUID);
   airMonAdvertising->setScanResponse(true);
-  airMonAdvertising->setMinPreferred(0x06); 
+  airMonAdvertising->setMinPreferred(0x06);
   airMonAdvertising->setMaxPreferred(0x12);
   BLEDevice::startAdvertising();
-  
+
   Serial.println("[#] BLE server has started. Waiting for connection...");
 }
 
-void loop() 
-{
+void loop() {
   String output;
 
   char bme680Value[256];
@@ -159,16 +148,19 @@ void loop()
   bool bme680HasTempAndHum = false;
   float bme680temp;
   float bme680hum;
-  if (bme680.run()) { // If new data is available
+  if (bme680.run()) {  // If new data is available
     bme680temp = bme680.temperature;
     bme680hum = bme680.humidity;
+    float bme680CO2 = bme680.co2Equivalent;
+    float bme680voc = bme680.breathVocEquivalent;
     output = String(bme680.staticIaq);
     output += ";" + String(bme680.iaqAccuracy);
-    output += ";" + String(bme680.co2Equivalent);
-    output += ";" + String(bme680.breathVocEquivalent);
+    output += ";" + String(bme680CO2);
+    output += ";" + String(bme680voc);
     output += ";" + String(bme680.runInStatus);
     output += ";" + String(bme680temp);
     output += ";" + String(bme680hum);
+    output += ";" + String(calculateIAQ(bme680CO2, bme680voc * 1000, bme680hum, bme680temp));
     Serial.println("[#] BME680: " + output);
     output.toCharArray(bme680Value, 256);
     bme680Updated = true;
@@ -190,8 +182,8 @@ void loop()
 
   char ccs811Value[256];
   bool ccs811Updated = false;
-  if(ccs811.available()) {
-    if(!ccs811.readData()) {
+  if (ccs811.available()) {
+    if (!ccs811.readData()) {
       uint16_t eCO2 = ccs811.geteCO2();
       uint16_t tvoc = ccs811.getTVOC();
       Serial.print("[#] CCS811: eCO2: " + String(eCO2) + "ppm; ");
@@ -199,7 +191,7 @@ void loop()
       output = String(eCO2);
       output += ";" + String(tvoc);
       if (bme680HasTempAndHum) {
-        float iaq = calculateIAQ(eCO2, tvoc, bme680temp, bme680hum);
+        uint8_t iaq = calculateIAQ(eCO2, tvoc, bme680hum, bme680temp);
         output += ";" + String(iaq);
         Serial.println("; IAQ: " + String(iaq));
       } else {
@@ -222,7 +214,7 @@ void loop()
 
   char sgp30Value[256];
   bool sgp30Updated = false;
-  if(sgp30.IAQmeasure()) {
+  if (sgp30.IAQmeasure()) {
     uint16_t eCO2 = sgp30.eCO2;
     uint16_t tvoc = sgp30.TVOC;
     Serial.print("[#] SGP30: eCO2: " + String(eCO2) + "ppm; ");
@@ -230,7 +222,7 @@ void loop()
     output = String(eCO2);
     output += ";" + String(tvoc);
     if (bme680HasTempAndHum) {
-      float iaq = calculateIAQ(eCO2, tvoc, bme680temp, bme680hum);
+      uint8_t iaq = calculateIAQ(eCO2, tvoc, bme680hum, bme680temp);
       output += ";" + String(iaq);
       Serial.println("; IAQ: " + String(iaq));
     } else {
@@ -240,13 +232,13 @@ void loop()
     sgp30Updated = true;
   } else {
     output = "Error reading from SGP30 sensor";
-      Serial.println("[!] " + output);
-      output.toCharArray(sgp30Value, 256);
-      sgp30Updated = true;
+    Serial.println("[!] " + output);
+    output.toCharArray(sgp30Value, 256);
+    sgp30Updated = true;
   }
 
   // nofify wenn mit server verbunden
-  if(devConn) {
+  if (devConn) {
     // sprintf(value, "#%d - %ld ms", ++cnt, millis());
     // int val = htonl(cnt);
     if (bme680Updated) {
@@ -265,11 +257,10 @@ void loop()
 
     oldConn = true;
   }
-  delay(1000);  
+  delay(1000);
 }
 
-int checkBME680SensorStatus(void)
-{
+int checkBME680SensorStatus(void) {
   if (bme680.bsecStatus != BSEC_OK) {
     if (bme680.bsecStatus < BSEC_OK) {
       Serial.println("[!] BSEC error code : " + String(bme680.bsecStatus));
@@ -288,8 +279,7 @@ int checkBME680SensorStatus(void)
   return bme680.bsecStatus | bme680.bme68xStatus;
 }
 
-void bme680LoadState(void)
-{
+void bme680LoadState(void) {
   if (EEPROM.read(0) == BSEC_MAX_STATE_BLOB_SIZE) {
     // Existing state in EEPROM
     Serial.println("[!] BME680: Reading state from EEPROM");
@@ -311,8 +301,7 @@ void bme680LoadState(void)
   }
 }
 
-void bme680UpdateState()
-{
+void bme680UpdateState() {
   bool update = false;
   if (stateUpdateCounter == 0) {
     /* First state update when IAQ accuracy is >= 3 */
@@ -333,7 +322,7 @@ void bme680UpdateState()
     if (checkBME680SensorStatus() == BSEC_OK) {
       Serial.println("[!] BME680: Writing state to EEPROM");
 
-      for (uint8_t i = 0; i < BSEC_MAX_STATE_BLOB_SIZE ; i++) {
+      for (uint8_t i = 0; i < BSEC_MAX_STATE_BLOB_SIZE; i++) {
         EEPROM.write(i + 1, bsecState[i]);
       }
 
@@ -344,16 +333,82 @@ void bme680UpdateState()
 }
 
 uint32_t getAbsoluteHumidity(float temperature, float humidity) {
-    // approximation formula from Sensirion SGP30 Driver Integration chapter 3.15
-    const float absoluteHumidity = 216.7f * ((humidity / 100.0f) * 6.112f * exp((17.62f * temperature) / (243.12f + temperature)) / (273.15f + temperature)); // [g/m^3]
-    const uint32_t absoluteHumidityScaled = static_cast<uint32_t>(1000.0f * absoluteHumidity); // [mg/m^3]
-    return absoluteHumidityScaled;
+  // approximation formula from Sensirion SGP30 Driver Integration chapter 3.15
+  const float absoluteHumidity = 216.7f * ((humidity / 100.0f) * 6.112f * exp((17.62f * temperature) / (243.12f + temperature)) / (273.15f + temperature));  // [g/m^3]
+  const uint32_t absoluteHumidityScaled = static_cast<uint32_t>(1000.0f * absoluteHumidity);                                                                 // [mg/m^3]
+  return absoluteHumidityScaled;
 }
 
-float calculateIAQ(uint16_t eCO2, uint16_t tvoc, float temp, float hum) {
-  float eCO2Contrib = ((eCO2) / (8000. - 400.)) * 500.;
-  float tvocContrib = (tvoc / 6000.) * 500.;
-  float tempPenalty = 1 + abs((temp - 22.5) / 22.5) * 0.1;
-  float humPenalty = 1 + abs((hum - 45) / 45) * 0.1;
-  return (eCO2Contrib * 0.45 + tvocContrib * 0.55) * tempPenalty * humPenalty;
+// float calculateIAQ(uint16_t eCO2, uint16_t tvoc, float temp, float hum) {
+//   float eCO2Contrib = ((eCO2) / (8000. - 400.)) * 500.;
+//   float tvocContrib = (tvoc / 6000.) * 500.;
+//   float tempPenalty = 1 + abs((temp - 22.5) / 22.5) * 0.1;
+//   float humPenalty = 1 + abs((hum - 45) / 45) * 0.1;
+//   return (eCO2Contrib * 0.45 + tvocContrib * 0.55) * tempPenalty * humPenalty;
+// }
+
+uint8_t calculateIAQ(float eCO2, float tvoc, float hum, float temp) {
+  uint8_t eCO2Value = geteCO2IAQValue(eCO2);
+  uint8_t tvocValue = geteTVOCIAQValue(tvoc);
+  uint8_t humTempValue = getHumTempIAQValue(hum, temp);
+
+  return int(roundf((eCO2Value + tvocValue + humTempValue) / 3.));
+}
+
+static uint8_t geteCO2IAQValue(float eCO2) {
+  if (eCO2 <= 400) return 1;
+  if (eCO2 <= 1000) return 2;
+  if (eCO2 <= 1500) return 3;
+  if (eCO2 <= 2000) return 4;
+  if (eCO2 <= 5000) return 5;
+  if (eCO2 > 5000 ) return 6;
+}
+
+static uint8_t geteTVOCIAQValue(float tvoc) {
+  if (tvoc <= 65) return 1;
+  if (tvoc <= 220) return 2;
+  if (tvoc <= 660) return 3;
+  if (tvoc <= 2200) return 4;
+  if (tvoc <= 3850) return 5;
+  if (tvoc > 3850) return 6;
+}
+
+static uint8_t getHumTempIAQValue(float humidity, float temperature) {
+  // Define the table as a 2D array
+  int table[9][13] = {
+    { 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6 },  // 10% row
+    { 6, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 6 },  // 20% row
+    { 6, 5, 5, 4, 4, 4, 4, 4, 4, 4, 4, 5, 6 },  // 30% row
+    { 6, 5, 5, 4, 3, 3, 3, 2, 2, 3, 4, 5, 6 },  // 40% row
+    { 5, 5, 4, 3, 2, 1, 1, 1, 2, 3, 4, 5, 6 },  // 50% row
+    { 5, 4, 3, 2, 1, 1, 1, 2, 2, 3, 4, 5, 6 },  // 60% row
+    { 5, 4, 3, 2, 1, 1, 1, 2, 3, 4, 5, 5, 6 },  // 70% row
+    { 5, 4, 2, 2, 2, 2, 2, 3, 4, 5, 5, 5, 6 },  // 80% row
+    { 6, 5, 4, 3, 3, 3, 3, 4, 5, 5, 6, 6, 6 },  // 90% row
+  };
+
+  // Define the humidity and temperature steps
+  int humiditySteps[] = { 10, 20, 30, 40, 50, 60, 70, 80, 90 };                     // Humidity steps in %
+  int temperatureSteps[] = { 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28 };  // Temperature steps in °C
+
+  // Find the closest humidity index
+  int humidityIndex = 0;
+  for (int i = 0; i < 9; i++) {
+    if (humidity <= humiditySteps[i]) {
+      humidityIndex = i;
+      break;
+    }
+  }
+
+  // Find the closest temperature index
+  int temperatureIndex = 0;
+  for (int i = 0; i < 13; i++) {
+    if (temperature <= temperatureSteps[i]) {
+      temperatureIndex = i;
+      break;
+    }
+  }
+
+  // Return the value from the table
+  return table[humidityIndex][temperatureIndex];
 }

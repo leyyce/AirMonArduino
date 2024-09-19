@@ -4,15 +4,30 @@
 #include <BLE2902.h>
 #include <EEPROM.h>
 
-#include "bsec.h"
+#include "bsec.h"  // Proprietary Bosch library for the BME680
 #include "Adafruit_CCS811.h"
 #include "Adafruit_SGP30.h"
 
+// Service and characteristic UUIDs for the environmental data
 #define SERV_UUID "ba59dd58-afe1-4ae0-a151-802a39967e89"
 #define BME680_CHAR_UUID "93260fdf-3636-4809-8abc-214217dd419e"
 #define CCS811_CHAR_UUID "99603130-0509-4dd7-af3a-bfff45cc1467"
 #define SGP30_CHAR_UUID "6dccd7a8-3452-4802-9555-0e020f0d8047"
 
+
+/* Configure the BSEC library with information about the sensor
+    18v/33v = Voltage at Vdd. 1.8V or 3.3V
+    3s/300s = BSEC operating mode, BSEC_SAMPLE_RATE_LP or BSEC_SAMPLE_RATE_ULP
+    4d/28d = Operating age of the sensor in days
+    generic_18v_3s_4d
+    generic_18v_3s_28d
+    generic_18v_300s_4d
+    generic_18v_300s_28d
+    generic_33v_3s_4d
+    generic_33v_3s_28d
+    generic_33v_300s_4d
+    generic_33v_300s_28d
+*/
 const uint8_t bsec_config_iaq[] = {
 #include "config/generic_33v_3s_4d/bsec_iaq.txt"
 };
@@ -21,6 +36,7 @@ const uint8_t bsec_config_iaq[] = {
 #define STATE_SAVE_PERIOD UINT32_C(360 * 60 * 1000)  // 360 minutes - 4 times a day
 
 Bsec bme680;
+// Needed to save the BME680 calibration state between resets
 uint8_t bsecState[BSEC_MAX_STATE_BLOB_SIZE] = { 0 };
 uint16_t stateUpdateCounter = 0;
 
@@ -32,8 +48,8 @@ BLECharacteristic *bme680Characteristic;
 BLECharacteristic *ccs811Characteristic;
 BLECharacteristic *sgp30Characteristic;
 
-bool devConn = false;
-bool oldConn = false;
+bool devConn = false;  // Is a device currently connected?
+bool oldConn = false;  // Was a device previously connected?
 
 class AirMonCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer *pServer) {
@@ -53,7 +69,7 @@ class AirMonCallbacks : public BLEServerCallbacks {
 };
 
 void setup() {
-  // EEPROM.begin(BSEC_MAX_STATE_BLOB_SIZE + 1);
+  EEPROM.begin(BSEC_MAX_STATE_BLOB_SIZE + 1);  // Prepare EEPROM for storage of BME680 state
   Serial.begin(115200);
   Serial.println("[#] Initializing sensors...");
 
@@ -141,11 +157,13 @@ void setup() {
 }
 
 void loop() {
+  // Caches the sensor readout data before it is copied into the actual buffer used for transmission
+  // Data is formated like this "val1;val2;val3;..."
   String output;
 
-  char bme680Value[256];
-  bool bme680Updated = false;
-  bool bme680HasTempAndHum = false;
+  char bme680Value[256];             // Transmission buffer for the BME680 values
+  bool bme680Updated = false;        // Has the transmission buffer been updated?
+  bool bme680HasTempAndHum = false;  // Was the sensor able to read values. In this case especially temperature and humidity data?
   float bme680temp;
   float bme680hum;
   if (bme680.run()) {  // If new data is available
@@ -175,13 +193,15 @@ void loop() {
     }
   }
 
+  // If the BME680 had data available to read this loop cycle,
+  // set the meassured temperature and humitdity for meassurment corrections on the CCS881 and SGP30 sensors
   if (bme680HasTempAndHum) {
     ccs811.setEnvironmentalData(bme680hum, bme680temp);
     sgp30.setHumidity(getAbsoluteHumidity(bme680temp, bme680hum));
   }
 
-  char ccs811Value[256];
-  bool ccs811Updated = false;
+  char ccs811Value[256];       // Transmission buffer for the CCS811 values
+  bool ccs811Updated = false;  // Has the transmission buffer been updated?
   if (ccs811.available()) {
     if (!ccs811.readData()) {
       uint16_t eCO2 = ccs811.geteCO2();
@@ -190,15 +210,18 @@ void loop() {
       Serial.print("TVOC: " + String(tvoc));
       output = String(eCO2);
       output += ";" + String(tvoc);
-      if (bme680HasTempAndHum) {
+      if (bme680HasTempAndHum) {  // If temperature and humidity data are available...
+        // ...calculate own IAQ score...
         uint8_t iaq = calculateIAQ(eCO2, tvoc, bme680hum, bme680temp);
         output += ";" + String(iaq);
         Serial.println("; IAQ: " + String(iaq));
+        // ...and prepare the data for transmission
+        output.toCharArray(ccs811Value, 256);
+        ccs811Updated = true;
       } else {
+        // Don't transmit data this itteration, because IAQ couldnt be calculated.
         Serial.println("");
       }
-      output.toCharArray(ccs811Value, 256);
-      ccs811Updated = true;
     } else {
       output = "Error reading from CCS811 sensor";
       Serial.println("[!] " + output);
@@ -212,8 +235,8 @@ void loop() {
     ccs811Updated = true;
   }
 
-  char sgp30Value[256];
-  bool sgp30Updated = false;
+  char sgp30Value[256];       // Transmission buffer for the SGP30 values
+  bool sgp30Updated = false;  // Has the transmission buffer been updated?
   if (sgp30.IAQmeasure()) {
     uint16_t eCO2 = sgp30.eCO2;
     uint16_t tvoc = sgp30.TVOC;
@@ -221,15 +244,18 @@ void loop() {
     Serial.print("TVOC: " + String(tvoc));
     output = String(eCO2);
     output += ";" + String(tvoc);
-    if (bme680HasTempAndHum) {
+    if (bme680HasTempAndHum) {  // If temperature and humidity data are available...
+      // ...calculate own IAQ score...
       uint8_t iaq = calculateIAQ(eCO2, tvoc, bme680hum, bme680temp);
       output += ";" + String(iaq);
       Serial.println("; IAQ: " + String(iaq));
+      // ...and prepare the data for transmission
+      output.toCharArray(sgp30Value, 256);
+      sgp30Updated = true;
     } else {
+      // Don't transmit data this itteration, because IAQ couldnt be calculated.
       Serial.println("");
     }
-    output.toCharArray(sgp30Value, 256);
-    sgp30Updated = true;
   } else {
     output = "Error reading from SGP30 sensor";
     Serial.println("[!] " + output);
@@ -237,10 +263,9 @@ void loop() {
     sgp30Updated = true;
   }
 
-  // nofify wenn mit server verbunden
+  // If a device is connected and the corresponding sensors did meassure some new data in this loop itteration,
+  // notify the connected device with the updated data.
   if (devConn) {
-    // sprintf(value, "#%d - %ld ms", ++cnt, millis());
-    // int val = htonl(cnt);
     if (bme680Updated) {
       bme680Characteristic->setValue(bme680Value);
       bme680Characteristic->notify();
@@ -255,11 +280,13 @@ void loop() {
       }
     }
 
-    oldConn = true;
+    oldConn = true;  // Change flag to indicate a device was previously connected.
   }
   delay(1000);
 }
 
+// Checks for errors with the BME680 sensor and prints it if error occured.
+// Returns 0 if no error was found or any non zero value in case of an error.
 int checkBME680SensorStatus(void) {
   if (bme680.bsecStatus != BSEC_OK) {
     if (bme680.bsecStatus < BSEC_OK) {
@@ -279,6 +306,8 @@ int checkBME680SensorStatus(void) {
   return bme680.bsecStatus | bme680.bme68xStatus;
 }
 
+// Loads a previously saved BME680 state from EEPROM if available,
+// else erases EEPROM
 void bme680LoadState(void) {
   if (EEPROM.read(0) == BSEC_MAX_STATE_BLOB_SIZE) {
     // Existing state in EEPROM
@@ -301,6 +330,8 @@ void bme680LoadState(void) {
   }
 }
 
+// Checks if BME680 state saved in EEPROM should be updated
+// and updates it if it's the case
 void bme680UpdateState() {
   bool update = false;
   if (stateUpdateCounter == 0) {
@@ -361,7 +392,7 @@ static uint8_t geteCO2IAQValue(float eCO2) {
   if (eCO2 <= 1500) return 3;
   if (eCO2 <= 2000) return 4;
   if (eCO2 <= 5000) return 5;
-  if (eCO2 > 5000 ) return 6;
+  if (eCO2 > 5000) return 6;
 }
 
 static uint8_t geteTVOCIAQValue(float tvoc) {
@@ -374,7 +405,6 @@ static uint8_t geteTVOCIAQValue(float tvoc) {
 }
 
 static uint8_t getHumTempIAQValue(float humidity, float temperature) {
-  // Define the table as a 2D array
   int table[9][13] = {
     { 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6 },  // 10% row
     { 6, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 6 },  // 20% row
